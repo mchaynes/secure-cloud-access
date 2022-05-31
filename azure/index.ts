@@ -2,7 +2,30 @@ import * as pulumi from "@pulumi/pulumi";
 import * as authorization from "@pulumi/azure-native/authorization";
 import * as azuread from "@pulumi/azuread";
 import * as github from "@pulumi/github";
+import * as pulumiservice from "@pulumi/pulumiservice";
 import * as helpers from "./azureHelpers";
+
+const config = new pulumi.Config()
+
+const repoFullName = config.require("repoFullName")
+
+const repoName = repoFullName.split("/")[1]
+
+const repo = github.getRepositoryOutput({
+  fullName: repoFullName,
+})
+
+export const repoUrl = pulumi.interpolate`https://github.com/${repo.fullName}`
+
+const pulumiToken = new pulumiservice.AccessToken("github-actions-token", {
+  description: pulumi.interpolate`token for ${repoUrl}`,
+})
+
+new github.ActionsSecret("pulumiToken", {
+  repository: repoName,
+  secretName: "PULUMI_ACCESS_TOKEN",
+  plaintextValue: pulumiToken.value.apply(f => f ?? ""),
+})
 
 // create an azure AD application
 const adApp = new azuread.Application("gha", {
@@ -34,7 +57,7 @@ new azuread.ApplicationFederatedIdentityCredential(
   "gha",
   {
     audiences: ["api://AzureADTokenExchange"],
-    subject: "repo:jaxxstorm/secure-cloud-access:ref:refs/heads/main", // this can be any ref
+    subject: `repo:${repoFullName}:ref:refs/heads/main`, // this can be any ref
     issuer: "https://token.actions.githubusercontent.com",
     applicationObjectId: adApp.objectId,
     displayName: "github-actions",
@@ -49,13 +72,13 @@ subInfo.then((info) => {
 
   // define some github actions secrets so your AZ login is correct
   new github.ActionsSecret("tenantId", {
-    repository: "secure-cloud-access",
+    repository: repoName,
     secretName: "AZURE_TENANT_ID",
     plaintextValue: info.tenantId,
   });
 
   new github.ActionsSecret("subscriptionId", {
-    repository: "secure-cloud-access",
+    repository: repoName,
     secretName: "AZURE_SUBSCRIPTION_ID",
     plaintextValue: info.subscriptionId,
   });
@@ -74,7 +97,7 @@ subInfo.then((info) => {
 
 // finally, we set the client id to be the application we created
 new github.ActionsSecret("clientId", {
-  repository: "secure-cloud-access",
+  repository: repoName,
   secretName: "AZURE_CLIENT_ID",
   plaintextValue: adApp.applicationId,
 });
